@@ -19,15 +19,31 @@ class AuthController extends Controller
      */
     public function register(Request $request)
     {
+
+        // Custom message untuk validasi
+        $messages = [
+            'email.unique' => 'Email sudah digunakan',
+            'username.unique' => 'Username sudah digunakan',
+            'email.email' => 'Format email tidak valid',
+            'password.min' => 'Password minimal harus 6 karakter',
+        ];
+
         // Validasi input dari request
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'fullname' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
             'username' => 'required|string|max:255|unique:users',
             'phone' => 'nullable|string|max:15',
             'salary' => 'nullable|numeric',
             'password' => 'required|string|min:6',
-        ]);
+        ], $messages);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($validator->errors()->all())->first(), // Ambil error pertama
+            ], 422);
+        }
 
 
         // Membuat user baru
@@ -176,7 +192,6 @@ class AuthController extends Controller
         $validator = Validator::make($request->all(), [
             'fullname' => 'sometimes|required|string|max:255',
             'phone' => 'sometimes|nullable|string|max:20',
-            'salary' => 'sometimes|nullable|numeric|min:0',
             'working_days' => 'sometimes|nullable|integer|in:5,6',
             'photo' => 'sometimes|image|mimes:jpg,jpeg,png',
         ]);
@@ -208,7 +223,6 @@ class AuthController extends Controller
         $user->update([
             'fullname' => $request->fullname ?? $user->fullname,
             'phone' => $request->phone ?? $user->phone,
-            'salary' => $request->salary ?? $user->salary,
             'working_days' => $request->working_days ?? $user->working_days,
             'photo' => $user->photo ?? $user->photo,
         ]);
@@ -216,13 +230,6 @@ class AuthController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Profil berhasil diupdate',
-            'user' => [
-                'fullname' => $user->fullname,
-                'phone' => $user->phone,
-                'salary' => (float) $user->salary, // Paksa salary menjadi double
-                'working_days' => (int) $user->working_days, // Paksa working_days menjadi integer
-                'photo' => $user->photo ? asset('storage/' . $user->photo) : null,
-            ]
         ], 200);
     }
 
@@ -262,6 +269,48 @@ class AuthController extends Controller
             'email' => $user->email
         ], 200);
     }
+
+    /**
+     * ✅ UPDATE SALARY API
+     * Endpoint: PUT /api/user/salary
+     * Fungsi: Mengupdate gaji user yang sedang login, dengan verifikasi password
+     * Akses: Hanya untuk user yang sudah login (Harus pakai token)
+     */
+    public function updateSalary(Request $request)
+    {
+        $user = $request->user();
+
+        // Validasi input
+        $validator = Validator::make($request->all(), [
+            'salary' => 'required|numeric|min:0', // Validasi untuk salary
+            'password' => 'required|string', // Validasi untuk password
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Format gaji atau password tidak sesuai', // Mengambil pesan error pertama saja
+            ], 422);
+        }
+
+        // Cek apakah password yang dimasukkan benar
+        if (!Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Password yang anda masukkan salah'
+            ], 401);
+        }
+
+        // Update gaji user
+        $user->update(['salary' => $request->salary]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Gaji berhasil diupdate',
+            'salary' => $user->salary
+        ], 200);
+    }
+
 
     public function updatePassword(Request $request)
     {

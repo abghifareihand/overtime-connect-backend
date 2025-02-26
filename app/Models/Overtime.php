@@ -15,7 +15,12 @@ class Overtime extends Model
         'overtime_hours',
         'total_overtime',
         'status',
-        'day_type'
+        'day_type',
+        'overtime_details'
+    ];
+
+    protected $casts = [
+        'overtime_details' => 'array',
     ];
 
     public function user()

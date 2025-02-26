@@ -16,9 +16,10 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained()->onDelete('cascade'); // Relasi dengan user
             $table->date('date'); // Tanggal lembur
             $table->double('overtime_hours'); // Jumlah jam lembur
-            $table->double('total_overtime'); // Total harga lemburan
             $table->boolean('status'); // 0 for Tidak Masuk, 1 for Masuk
             $table->string('day_type')->default('regular');
+            $table->double('total_overtime'); // Total harga lemburan
+            $table->json('overtime_details');
             $table->timestamps();
         });
     }

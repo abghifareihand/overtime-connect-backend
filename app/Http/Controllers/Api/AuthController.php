@@ -148,42 +148,11 @@ class AuthController extends Controller
 
 
     /**
-     * ✅ UPDATE PROFILE PHOTO API
-     * Endpoint: PUT /api/user/photo
-     * Fungsi: Mengupdate foto profil user yang sedang login
+     * ✅ UPDATE USER PROFILE API
+     * Endpoint: PUT /api/user/profile
+     * Fungsi: Mengupdate profil user yang sedang login
      * Akses: Hanya untuk user yang sudah login (Harus pakai token)
      */
-    public function updatePhoto(Request $request)
-    {
-        // Validasi input (wajib gambar, format jpg/png/jpeg, max 2MB)
-        $request->validate([
-            'photo' => 'required|image|mimes:jpg,jpeg,png|max:2048',
-        ]);
-
-        // Ambil user yang sedang login
-        $user = $request->user();
-
-        // Hapus foto lama jika ada
-        if ($user->photo) {
-            Storage::disk('public')->delete($user->photo);
-        }
-
-        // Simpan foto baru ke folder storage/app/public/photo
-        $photo = $request->file('photo');
-        $photo_name = time() . '.' . $photo->getClientOriginalExtension();
-        $filePath = $photo->storeAs('photo', $photo_name, 'public');
-
-        // Update path foto di database
-        $user->update(['photo' => $filePath]);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Foto profil berhasil diupdate',
-            // 'photo' => asset('storage/' . $filePath) // URL untuk akses foto
-            'photo' => $filePath // URL untuk akses foto
-        ], 200);
-    }
-
     public function updateProfile(Request $request)
     {
         $user = $request->user();
@@ -233,8 +202,12 @@ class AuthController extends Controller
         ], 200);
     }
 
-
-
+    /**
+     * ✅ UPDATE USER EMAIL API
+     * Endpoint: PUT /api/user/email
+     * Fungsi: Mengupdate email user yang sedang login
+     * Akses: Hanya untuk user yang sudah login (Harus pakai token)
+     */
     public function updateEmail(Request $request)
     {
         $user = $request->user();

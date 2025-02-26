@@ -20,9 +20,10 @@ class OvertimeController extends Controller
         $request->validate([
             'date' => 'required|date',
             'overtime_hours' => 'required|numeric|min:0',
-            'total_overtime' => 'required|numeric|min:0',
             'status' => 'required|boolean',  // 0 untuk Tidak Masuk, 1 untuk Masuk
             'day_type' => 'required|string|in:regular,holiday',
+            'total_overtime' => 'required|numeric|min:0',
+            'overtime_details' => 'array',
         ]);
 
         // Ambil data user dari token (karena menggunakan auth:sanctum)
@@ -36,7 +37,7 @@ class OvertimeController extends Controller
         if ($existingOvertime) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'You have already recorded overtime for this date.',
+                'message' => 'Anda telah mencatat lembur untuk tanggal ini',
             ], 422);
         }
 
@@ -45,15 +46,16 @@ class OvertimeController extends Controller
             'user_id' => $user->id,
             'date' => $request->date,
             'overtime_hours' => $request->overtime_hours,  // Simpan jumlah jam lembur
-            'total_overtime' => $request->total_overtime,  // Simpan total harga lemburan
             'status' => $request->status,  // Menyimpan status kehadiran
             'day_type' => $request->day_type,  // Menyimpan day type
+            'total_overtime' => $request->total_overtime,  // Simpan total harga lemburan
+            'overtime_details' => json_encode($request->overtime_details),
         ]);
 
         return response()->json([
             'status' => 'success',
             'message' => 'Overtime recorded successfully',
-            'data' => $overtime
+            'data' => collect($overtime)->except(['overtime_details'])
         ], 201);
     }
 
@@ -122,7 +124,10 @@ class OvertimeController extends Controller
         $overtimeData = Overtime::where('user_id', $user->id)
             ->whereBetween('date', [$startDate, $endDate])
             ->orderBy('date', 'desc') // Urutkan dari terbaru
-            ->get();
+            ->get()
+            ->map(function ($overtime) {
+                return collect($overtime)->except(['overtime_details']); // Hilangkan overtime_details
+            });
 
         // Hitung total jam lembur dan total harga lemburan
         $totalHours = $overtimeData->sum('overtime_hours');
@@ -152,7 +157,9 @@ class OvertimeController extends Controller
         $overtimeData = Overtime::where('user_id', $user->id)
             ->whereBetween('date', [$startDate, $endDate])
             ->orderBy('date', 'desc') // Urutkan dari terbaru
-            ->get();
+            ->get()->map(function ($overtime) {
+                return collect($overtime)->except(['overtime_details']); // Hilangkan overtime_details
+            });
 
         // Hitung total jam lembur dan total harga lemburan
         $totalHours = $overtimeData->sum('overtime_hours');
@@ -185,7 +192,10 @@ class OvertimeController extends Controller
         $overtimeData = Overtime::where('user_id', $user->id)
             ->whereBetween('date', [$startDate, $endDate])
             ->orderBy('date', 'desc') // Urutkan dari terbaru
-            ->get();
+            ->get()
+            ->map(function ($overtime) {
+                return collect($overtime)->except(['overtime_details']); // Hilangkan overtime_details
+            });
 
         // Hitung total jam lembur dan total harga lemburan
         $totalHours = $overtimeData->sum('overtime_hours');
@@ -235,7 +245,7 @@ class OvertimeController extends Controller
 
             $groupedData[$month]['total_hours'] += $overtime->overtime_hours;
             $groupedData[$month]['total_amount'] += $overtime->total_overtime;
-            $groupedData[$month]['overtimes'][] = $overtime;
+            $groupedData[$month]['overtimes'][] = collect($overtime)->except(['overtime_details']);
 
             // Akumulasi total per tahun
             $totalHours += $overtime->overtime_hours;
@@ -248,6 +258,124 @@ class OvertimeController extends Controller
             'total_hours' => $totalHours,
             'total_amount' => $totalAmount,
             'data' => $groupedData
+        ], 200);
+    }
+
+    /**
+     * ✅ CALCULATED
+     * Fungsi: Menghitung jam lembur
+     */
+    public function calculate(Request $request)
+    {
+        $request->validate([
+            'monthly_salary' => 'required|numeric',
+            'day_type' => 'required|string',
+            'working_days' => 'required|integer',
+            'overtime_hours' => 'required|numeric|min:0'
+        ]);
+
+        $salary = $request->monthly_salary;
+        $dayType = $request->day_type;
+        $workingDays = $request->working_days;
+        $hours = $request->overtime_hours;
+
+        $result = $this->calculateOvertime($salary, $dayType, $workingDays, $hours);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Overtime calculation successful!',
+            'total_overtime' => $result['total_overtime'],
+            'overtime_details' => $result['overtime_details']
+        ]);
+    }
+
+    private function calculateOvertime($salary, $dayType, $workingDays, $hours)
+    {
+        $totalOvertime = 0;
+        $overtimeDetails = [];
+
+        $fullHours = floor($hours); // Jam bulat
+        $extraHalfHour = ($hours - $fullHours) == 0.5; // Cek apakah ada tambahan 0.5 jam
+        $lastRate = null;
+
+        $formattedSalary = number_format($salary, 0, ',', '.'); // Format angka
+
+        if ($dayType === 'regular') {
+            for ($i = 1; $i <= $fullHours; $i++) {
+                $rate = ($i == 1) ? 1.5 : 2;
+                $currentOvertime = round(($salary * $rate) / 173);
+                $formula = "1 x $formattedSalary x $rate / 173"; // Format salary
+
+                $overtimeDetails[] = [
+                    'formula' => $formula,
+                    'result' => $currentOvertime
+                ];
+                $totalOvertime += $currentOvertime;
+                $lastRate = $rate;
+            }
+        } elseif ($dayType === 'holiday') {
+            for ($i = 1; $i <= $fullHours; $i++) {
+                if ($workingDays == 5) {
+                    $rate = ($i <= 8) ? 2 : (($i == 9) ? 3 : 4);
+                } elseif ($workingDays == 6) {
+                    $rate = ($i <= 7) ? 2 : (($i == 8) ? 3 : 4);
+                }
+
+                $currentOvertime = round(($salary * $rate) / 173);
+                $formula = "1 x $formattedSalary x $rate / 173"; // Format salary
+
+                $overtimeDetails[] = [
+                    'formula' => $formula,
+                    'result' => $currentOvertime
+                ];
+                $totalOvertime += $currentOvertime;
+                $lastRate = $rate;
+            }
+        }
+
+        // Jika ada tambahan 0.5 jam, gabungkan dengan jam terakhir jika rate-nya sama
+        if ($extraHalfHour && $lastRate !== null) {
+            $currentOvertime = round(($salary * $lastRate * 0.5) / 173);
+            $formula = "0.5 x $formattedSalary x $lastRate / 173"; // Format salary
+
+            $overtimeDetails[] = [
+                'formula' => $formula,
+                'result' => $currentOvertime
+            ];
+            $totalOvertime += $currentOvertime;
+        }
+
+        return [
+            'total_overtime' => round($totalOvertime),
+            'overtime_details' => $overtimeDetails
+        ];
+    }
+
+
+    public function getOvertimeDetails($id)
+    {
+        // Cari data lembur berdasarkan ID dan pastikan milik user yang login
+        $user = Auth::user();
+        $overtime = Overtime::where('user_id', $user->id)->find($id);
+
+        if (!$overtime) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Overtime record not found'
+            ], 404);
+        }
+
+        // Decode JSON overtime_details
+        $overtimeDetails = json_decode($overtime->overtime_details, true);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Overtime details retrieved successfully',
+            'date' => $overtime->date, // Ambil langsung dari database
+            'day_type' => $overtime->day_type, // Ambil langsung dari database
+            'overtime_hours' => $overtime->overtime_hours, // Ambil langsung dari database
+            'total_overtime' => $overtime->total_overtime, // Ambil langsung dari database
+            'data' => $overtimeDetails
         ], 200);
     }
 }

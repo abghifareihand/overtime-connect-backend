@@ -261,6 +261,135 @@ class OvertimeController extends Controller
         ], 200);
     }
 
+    public function getReportDate(Request $request)
+    {
+        $user = Auth::user(); // Ambil user yang sedang login
+        $startDate = $request->query('start_date');
+        $endDate = $request->query('end_date');
+
+        if (!$startDate || !$endDate) {
+            // Ambil awal dan akhir bulan ini
+            $startOfMonth = Carbon::now()->startOfMonth()->toDateString();
+            $endOfMonth = Carbon::now()->endOfMonth()->toDateString();
+
+            // Ambil data bulan ini hanya untuk user yang sedang login
+            $overtimes = Overtime::where('user_id', $user->id)
+                ->whereBetween('date', [$startOfMonth, $endOfMonth])
+                ->orderBy('date', 'desc')
+                ->get();
+
+            if ($overtimes->isNotEmpty()) {
+                $firstDate = Carbon::parse($overtimes->last()->date)->format('d/m/Y');
+                $lastDate = Carbon::parse($overtimes->first()->date)->format('d/m/Y');
+                $formattedDateRange = "{$firstDate} - {$lastDate}";
+            } else {
+                // Jika data kosong, tetap tampilkan rentang awal & akhir bulan ini
+                $formattedDateRange = Carbon::now()->startOfMonth()->format('d/m/Y') . ' - ' . Carbon::now()->endOfMonth()->format('d/m/Y');
+            }
+        } else {
+            // Ambil data sesuai input tanggal user hanya untuk user yang sedang login
+            $overtimes = Overtime::where('user_id', $user->id)
+                ->whereBetween('date', [$startDate, $endDate])
+                ->get();
+
+            // Format tanggal input menjadi dd/mm/yyyy
+            $formattedStartDate = Carbon::parse($startDate)->format('d/m/Y');
+            $formattedEndDate = Carbon::parse($endDate)->format('d/m/Y');
+            $formattedDateRange = "{$formattedStartDate} - {$formattedEndDate}";
+        }
+
+        // Menghitung total jam lembur dan total harga lemburan
+        $totalHours = $overtimes->sum('overtime_hours');
+        $totalAmount = $overtimes->sum('total_overtime');
+
+        return response()->json([
+            'success' => true,
+            'date_range' => $formattedDateRange,
+            'total_hours' => $totalHours,
+            'total_amount' => $totalAmount,
+            'data' => $overtimes
+        ], 200);
+    }
+
+
+    public function getReportById($id)
+    {
+        $overtime = Overtime::find($id);
+
+        if (!$overtime) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data not found'
+            ], 404);
+        }
+
+        // // Hapus overtime_details sebelum mengembalikan response
+        // $filteredOvertime = $overtime->toArray();
+        // unset($filteredOvertime['overtime_details']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $overtime
+        ], 200);
+    }
+
+    public function getOvertimeDetails($id)
+    {
+        // Cari data lembur berdasarkan ID dan pastikan milik user yang login
+        $user = Auth::user();
+        $overtime = Overtime::where('user_id', $user->id)->find($id);
+
+        if (!$overtime) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Overtime record not found'
+            ], 404);
+        }
+
+        // Decode JSON overtime_details
+        $overtimeDetails = json_decode($overtime->overtime_details, true);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Overtime details retrieved successfully',
+            'date' => $overtime->date, // Ambil langsung dari database
+            'day_type' => $overtime->day_type, // Ambil langsung dari database
+            'overtime_hours' => $overtime->overtime_hours, // Ambil langsung dari database
+            'total_overtime' => $overtime->total_overtime, // Ambil langsung dari database
+            'data' => $overtimeDetails
+        ], 200);
+    }
+
+    /**
+     * Menghapus data lembur berdasarkan ID.
+     * Endpoint: DELETE /api/overtime/{id}
+     */
+    public function destroy($id)
+    {
+        // Ambil data user dari token
+        $user = Auth::user();
+
+        // Cari data lembur berdasarkan ID dan pastikan milik user yang login
+        $overtime = Overtime::where('user_id', $user->id)->find($id);
+
+        if (!$overtime) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Data lembur tidak ditemukan'
+            ], 404);
+        }
+
+        // Hapus data lembur
+        $overtime->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Data lembur berhasil dihapus'
+        ], 200);
+    }
+
+
+
     /**
      * ✅ CALCULATED
      * Fungsi: Menghitung jam lembur
@@ -349,33 +478,5 @@ class OvertimeController extends Controller
             'total_overtime' => round($totalOvertime),
             'overtime_details' => $overtimeDetails
         ];
-    }
-
-
-    public function getOvertimeDetails($id)
-    {
-        // Cari data lembur berdasarkan ID dan pastikan milik user yang login
-        $user = Auth::user();
-        $overtime = Overtime::where('user_id', $user->id)->find($id);
-
-        if (!$overtime) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Overtime record not found'
-            ], 404);
-        }
-
-        // Decode JSON overtime_details
-        $overtimeDetails = json_decode($overtime->overtime_details, true);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Overtime details retrieved successfully',
-            'date' => $overtime->date, // Ambil langsung dari database
-            'day_type' => $overtime->day_type, // Ambil langsung dari database
-            'overtime_hours' => $overtime->overtime_hours, // Ambil langsung dari database
-            'total_overtime' => $overtime->total_overtime, // Ambil langsung dari database
-            'data' => $overtimeDetails
-        ], 200);
     }
 }

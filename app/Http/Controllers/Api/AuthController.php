@@ -4,11 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -70,7 +74,7 @@ class AuthController extends Controller
     }
 
     /**
-     * ✅ LOGIN API (Login dengan Username & Password)
+     * ✅ LOGIN API (Login dengan Email atau Username & Password)
      * Endpoint: POST /api/login
      * Fungsi: Login user dan mengembalikan token autentikasi
      */
@@ -78,18 +82,20 @@ class AuthController extends Controller
     {
         // Validasi input dari request
         $request->validate([
-            'username' => 'required|string',
+            'login' => 'required|string', // Bisa berupa email atau username
             'password' => 'required|string',
         ]);
 
-        // Cek apakah user dengan username tersebut ada di database
-        $user = User::where('username', $request->username)->first();
+        // Cari user berdasarkan email atau username
+        $user = User::where('username', $request->login)
+            ->orWhere('email', $request->login)
+            ->first();
 
-        // Jika username tidak ditemukan
+        // Jika user tidak ditemukan
         if (!$user) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Username tidak ditemukan'
+                'message' => 'Email atau Username tidak ditemukan'
             ], 404);
         }
 
@@ -101,17 +107,22 @@ class AuthController extends Controller
             ], 401);
         }
 
+        // Tentukan metode login yang digunakan
+        $loginMethod = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
+
         // Generate token menggunakan Laravel Sanctum
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        // Mengembalikan response JSON dengan status sukses
+        // Mengembalikan response JSON dengan pesan yang sesuai
         return response()->json([
             'status' => 'success',
-            'message' => 'Login berhasil',
+            'message' => 'Login menggunakan ' . ($loginMethod === 'email' ? 'email' : 'username') . ' berhasil',
             'token' => $token,
             'user' => $user
-        ], 200); // Status HTTP 200 (OK)
+        ], 200);
     }
+
+
 
     /**
      * ✅ LOGOUT API
@@ -155,7 +166,7 @@ class AuthController extends Controller
      */
     public function updateProfile(Request $request)
     {
-        $user = $request->user();
+        $user = $request->user(); // Mendapatkan user dari token
 
         // Validasi input
         $validator = Validator::make($request->all(), [
@@ -163,18 +174,22 @@ class AuthController extends Controller
             'phone' => 'sometimes|nullable|string|max:20',
             'working_days' => 'sometimes|nullable|integer|in:5,6',
             'photo' => 'sometimes|image|mimes:jpg,jpeg,png',
+            'username' => 'sometimes|required|string|max:50|unique:users,username,' . $user->id,
+        ], [
+            'photo.image' => 'Foto harus berupa gambar.',
+            'photo.mimes' => 'Format foto harus jpg, jpeg, atau png.',
+            'username.unique' => 'Username sudah digunakan, silakan pilih username lain.',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Format foto tidak sesuai', // Mengambil pesan error pertama saja
+                'message' => $validator->errors()->first(), // Menampilkan error pertama dalam bahasa Indonesia
             ], 422);
         }
 
         // Jika ada unggahan foto baru, hapus foto lama dan simpan yang baru
         if ($request->hasFile('photo')) {
-            // Hapus foto lama jika ada
             if ($user->photo) {
                 Storage::disk('public')->delete($user->photo);
             }
@@ -191,6 +206,7 @@ class AuthController extends Controller
         // Update data user, mempertahankan data lama jika tidak ada input baru
         $user->update([
             'fullname' => $request->fullname ?? $user->fullname,
+            'username' => $request->username ?? $user->username,
             'phone' => $request->phone ?? $user->phone,
             'working_days' => $request->working_days ?? $user->working_days,
             'photo' => $user->photo ?? $user->photo,
@@ -198,9 +214,11 @@ class AuthController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'message' => 'Profil berhasil diupdate',
+            'message' => 'Profil berhasil diperbarui.',
         ], 200);
     }
+
+
 
     /**
      * ✅ UPDATE USER EMAIL API
@@ -242,6 +260,59 @@ class AuthController extends Controller
             'email' => $user->email
         ], 200);
     }
+
+    /**
+     * ✅ UPDATE USERNAME API
+     * Endpoint: PUT /api/user/username
+     * Fungsi: Mengupdate username dengan verifikasi password
+     */
+    public function updateUsername(Request $request)
+    {
+        $user = $request->user();
+
+        $messages = [
+            'username.required' => 'Username wajib diisi',
+            'username.unique' => 'Username sudah digunakan',
+            'username.not_regex' => 'Username tidak boleh menggunakan format email',
+            'password.required' => 'Password wajib diisi',
+        ];
+
+        $validator = Validator::make($request->all(), [
+            'username' => [
+                'required',
+                'string',
+                'max:255',
+                'unique:users,username',
+                'not_regex:/^[^@]+@[^@]+\.[^@]+$/', // Melarang format email
+            ],
+            'password' => 'required|string',
+        ], $messages);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($validator->errors()->all())->first(),
+            ], 422);
+        }
+
+        // Cek apakah password yang dimasukkan benar
+        if (!Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Password yang anda masukkan salah'
+            ], 401);
+        }
+
+        // Update username
+        $user->update(['username' => $request->username]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Username berhasil diupdate',
+            'username' => $user->username
+        ], 200);
+    }
+
 
     /**
      * ✅ UPDATE SALARY API
@@ -319,5 +390,80 @@ class AuthController extends Controller
             'status' => 'success',
             'message' => 'Password berhasil diupdate'
         ], 200);
+    }
+
+    /**
+     * ✅ FORGOT PASSWORD - KIRIM LINK RESET PASSWORD
+     * Endpoint: POST /api/forgot-password
+     */
+    public function forgotPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'email' => 'required|email|exists:users,email',
+        ], [
+            'email.exists' => 'Email tidak terdaftar di sistem.',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $validator->errors()->first(),
+            ], 422);
+        }
+
+        $status = Password::sendResetLink($request->only('email'));
+
+        if ($status === Password::RESET_LINK_SENT) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Link reset password telah dikirim ke email Anda.',
+            ], 200);
+        }
+
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Gagal mengirimkan link reset password.',
+        ], 500);
+    }
+
+    /**
+     * ✅ RESET PASSWORD
+     * Endpoint: POST /api/reset-password
+     */
+    public function resetPassword(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'token' => 'required',
+            'email' => 'required|email|exists:users,email',
+            'password' => 'required|min:8|confirmed',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $validator->errors()->first(),
+            ], 422);
+        }
+
+        $status = Password::reset(
+            $request->only('email', 'password', 'password_confirmation', 'token'),
+            function ($user, $password) {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                ])->save();
+            }
+        );
+
+        if ($status === Password::PASSWORD_RESET) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Password berhasil direset. Silakan login dengan password baru.',
+            ], 200);
+        }
+
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Token tidak valid atau telah kadaluarsa.',
+        ], 400);
     }
 }
